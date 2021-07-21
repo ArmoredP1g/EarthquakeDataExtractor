@@ -6,16 +6,39 @@
 *****************************************/
 void DataExtract::Extract(const char *  startTime, const char *  endTime, limitingConditions * limitingConditions, const char *  reportPath, const char *  txtPath, const char *  outputPath)
 {
-	//qDebug() << "file reader functon ID:" << QThread::currentThreadId();
+	
 	//先找到需要包含的文件路径
 	vector<string>* filelist = getPropFileList(txtPath,startTime,endTime);
 	vector<string>* reportDirList = getDirnames(reportPath);
+
+	int fileCounts = filelist->size();
+	int reportCounts = reportDirList->size();
+	if (fileCounts != 0)
+	{
+		cout << "数据文件总数:	" << fileCounts << endl;
+	}
+	else
+	{
+		cout << "未找到数据文件"<< endl;
+		return;
+ 	}
+
+	if (reportCounts != 0)
+	{
+		cout << "report文件总数:	" << fileCounts << endl;
+	}
+	else
+	{
+		cout << "未找到report文件" << endl;
+		return;
+	}
+
+	cout << "----------------------RUNNING----------------------" << endl;
+
 	//找到对应的report文件中的时间信息，并截取文件
 	for (int iter = 0;iter < filelist->size(); iter++)
-	{	
-
-		//cout << iter << endl;
-		emit ProgressMove((int(double(iter+1 * 100)) / double(filelist->size())));
+	{		
+		emit ProgressMove((iter * 100) / fileCounts);
 		//找到偏移的行数
 		double diff = getDiff((*filelist)[iter], reportPath, reportDirList);
 
@@ -28,9 +51,10 @@ void DataExtract::Extract(const char *  startTime, const char *  endTime, limiti
 			continue;
 		}
 	}
-	qDebug() << QString::fromLocal8Bit("*********************************************")<< endl;
-	qDebug() << QString::fromLocal8Bit("*********************截完了******************") << endl;
-	qDebug() << QString::fromLocal8Bit("*********************************************") << endl;
+	//把生成的文件按原始目录整理
+	//RegroupFiles();
+
+	emit ProgressMove(100);
 	delete filelist;
 	delete reportDirList;
 }
@@ -83,7 +107,7 @@ vector<string> * DataExtract::getDirnames(string path)
 	获取路径下所有的文件
 	(包括子路径下的)
 *****************************************/
-vector<string> * DataExtract::getFilenames(string path)
+vector<string> * DataExtract::getFilenames(string path, bool subdir)
 {
 	//文件句柄 win10下必须是LONG LONG
 	long long hFile = 0;
@@ -102,17 +126,17 @@ vector<string> * DataExtract::getFilenames(string path)
 		if (strcmp(fileInfo.name, ".") != 0 && strcmp(fileInfo.name, "..") != 0)
 		{
 			//判断是文件夹还是文件
-			if (fileInfo.attrib&_A_SUBDIR)
+			if (fileInfo.attrib&_A_SUBDIR && subdir)
 			{
 				//是文件夹的话递归调用
-				vector<string> * temp = getFilenames(path + "\\" + fileInfo.name);
+				vector<string> * temp = getFilenames(path + "\\" + fileInfo.name, true);
 				for (string iter : (*temp))
 				{
 					result->push_back(iter);
 				}
 				delete temp;
 			}
-			else
+			else if(!(fileInfo.attrib&_A_SUBDIR))
 			{
 				//是文件的话直接塞进去
 				result->push_back(path+"\\"+fileInfo.name);
@@ -168,7 +192,7 @@ vector<string> * DataExtract::getPropFileList(string path, string startTime, str
 	{
 		//将初选目录下所有文件加载到内存
 		vector<string> * temp;
-		temp = getFilenames(iter);
+		temp = getFilenames(iter,true);
 
 		vector<string>::iterator i;
 
@@ -234,7 +258,7 @@ double DataExtract::getDiff(string path, string reportPath, vector<string>* repo
 	//遍历所有匹配的文件夹下的所有文件，找到对应的时间
 	for (string iter : tempPathList)
 	{
-		vector<string> * files = getFilenames(iter);
+		vector<string> * files = getFilenames(iter,true);
 		for (string file : *(files))
 		{
 			//内存泄漏就在这
@@ -242,7 +266,7 @@ double DataExtract::getDiff(string path, string reportPath, vector<string>* repo
 			string line;//存放一行文本内容
 			if (!fs.is_open())
 			{
-				qDebug() << QString::fromLocal8Bit("文件打不开:")<< QString(file.data()) << endl;				
+				cout << "文件打不开:"<< file.data() << endl;				
 				fs.close();
 				continue;
 			}
@@ -254,19 +278,19 @@ double DataExtract::getDiff(string path, string reportPath, vector<string>* repo
 				//检查report文件完整性
 				if (params[0] != "DBO")
 				{
-					qDebug() << QString::fromLocal8Bit("文件第一行DBO参数异常:") << QString(file.data()) << endl;
+					cout << "文件第一行DBO参数异常:" << file.data() << endl;
 					fs.close();
 					continue;
 				}
 				if (params[2].length() != 10 || split(params[2], "-").size() != 3)
 				{
-					qDebug() << QString::fromLocal8Bit("文件第一行日期参数异常:") << QString(file.data()) << endl;
+					cout << "文件第一行日期参数异常:" << file.data() << endl;
 					fs.close();
 					continue;
 				}
 				if (params[3].length() != 11 || split(params[3],":").size() != 3)
 				{
-					qDebug() << QString::fromLocal8Bit("文件第一行时分秒参数异常:") << QString(file.data()) << endl;
+					cout << "文件第一行时分秒参数异常:" << file.data() << endl;
 					fs.close();
 					continue;
 				}
@@ -284,7 +308,6 @@ double DataExtract::getDiff(string path, string reportPath, vector<string>* repo
 			}
 
 
-
 			while (getline(fs, line))
 			{
 				vector<string> params = split(line, "\t");
@@ -294,7 +317,7 @@ double DataExtract::getDiff(string path, string reportPath, vector<string>* repo
 				{
 					if (params[6] == "NoTime")
 					{
-						qDebug() << QString::fromLocal8Bit("P波时间为NoTime:") << QString(file.data()) << endl;
+						cout << "P波时间为NoTime:" << file.data() << endl;
 						continue;
 					}
 					PgSec = TimeTrans2Sec(params[7]);
@@ -304,7 +327,7 @@ double DataExtract::getDiff(string path, string reportPath, vector<string>* repo
 				{
 					if (params[6] == "NoTime")
 					{
-						qDebug() << QString::fromLocal8Bit("S波时间为NoTime:") << QString(file.data()) << endl;
+						cout << "S波时间为NoTime:" <<file.data() << endl;
 						continue;
 					}
 					SgSec = TimeTrans2Sec(params[7]);
@@ -318,6 +341,13 @@ double DataExtract::getDiff(string path, string reportPath, vector<string>* repo
 			}
 
 			fs.close();
+			//若时间没获取到，直接返回-1
+			if (PgDate == "" || SgDate == "")
+			{
+				cout << "report file: " << file << " PG或者SG其中一个没有" << endl;
+				delete files;
+				return -1;
+			}
 
 			//判断时间跨没跨天
 			if (PgDate == SgDate)
@@ -353,17 +383,27 @@ void DataExtract::CreateFile(string path, string outputPath, double diff)
 	//跳过偏移行数
 	for (int l = 0; l < diff * 100; l++)
 	{
-		istream &a = getline(infile, line);
+		if (!getline(infile, line))
+		{
+			cout << "文件不够长:" << path << endl;
+			return;
+		}
 	}
 
 	//没文件夹创建一个
+	//0905
 	if (_access((outputPath + "\\" + filenames[filenames.size() - 2].substr(2, 4)).c_str(), 0) == -1)
 	{
 		_mkdir((outputPath + "\\" + filenames[filenames.size() - 2].substr(2, 4)).c_str());
 	}
+	//"20090501000404"
+	if (_access((outputPath + "\\" + filenames[filenames.size() - 2].substr(2, 4)+"\\"+ filenames[filenames.size()-2]).c_str(), 0) == -1)
+	{
+		_mkdir((outputPath + "\\" + filenames[filenames.size() - 2].substr(2, 4) + "\\" + filenames[filenames.size() - 2]).c_str());
+	}
 
 	filenames = split(path,"\\");
-	string finalpath = (outputPath + "\\" + filenames[filenames.size() - 2].substr(2, 4) + "\\(cutted)" + filenames.back());
+	string finalpath = (outputPath + "\\" + filenames[filenames.size() - 2].substr(2, 4) + "\\" + filenames[filenames.size() - 2] + "\\" + filenames.back());
 
 	//已经有这文件了就跳过了
 	if (_access(finalpath.data(),0) != -1)
@@ -382,6 +422,16 @@ void DataExtract::CreateFile(string path, string outputPath, double diff)
 	outfile.close();
 }
 
+void DataExtract::RegroupFiles(string outputPath)
+{
+	vector<string>* filelist = getFilenames(outputPath, false);
+	for (string iter : *filelist)
+	{
+
+		rename(iter.data(),iter.data());
+	}
+
+}
 
 vector<string> DataExtract::split(const string& str, const string& delim) {
 	vector<string> res;
@@ -436,5 +486,10 @@ double DataExtract::TimeTrans2Sec(string time)
 {
 	vector<string> hhmmss = split(time,":");
 	return atof(hhmmss[0].c_str()) * 3600 + atof(hhmmss[1].c_str()) * 60 + atof(hhmmss[2].c_str());
+}
+
+void DataExtract::Test()
+{
+
 }
 
