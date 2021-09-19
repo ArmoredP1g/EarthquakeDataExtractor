@@ -4,6 +4,7 @@
 #include <QThread>
 #include "ui_EarthquakeDataExtract.h"
 #include "DataExtract.h"
+#include "Setting.h"
 using namespace std;
 
 class EarthquakeDataExtract : public QWidget
@@ -29,10 +30,10 @@ private:
 
 	//线程管理
 	QThread *threadManage;
-
+	//设置
+	Setting * settings;
 signals:
 	void thread_Extract(const char *  startTime, const char *  endTime, limitingConditions * limitingConditions, const char *  reportPath, const char *  txtPath, const char *  outputPath);
 private slots:
 	void DataExtract();
-
 };

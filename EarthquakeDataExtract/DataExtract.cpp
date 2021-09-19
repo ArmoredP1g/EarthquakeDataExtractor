@@ -1,4 +1,11 @@
 #include "DataExtract.h"
+
+DataExtract::DataExtract()
+{
+	initThreadLoop(16);
+	//th_ThreadRecycler.detach();
+}
+
 /****************************************
 	by Andrew Mao 210715
 	唯一对外部函数，将剪切完的
@@ -6,7 +13,9 @@
 *****************************************/
 void DataExtract::Extract(const char *  startTime, const char *  endTime, limitingConditions * limitingConditions, const char *  reportPath, const char *  txtPath, const char *  outputPath)
 {
-	
+	//激活线程回收器
+	thread_Flag = true;
+	th_ThreadRecycler = std::thread(&DataExtract::ThreadRecycler, this);
 	//先找到需要包含的文件路径
 	vector<string>* filelist = getPropFileList(txtPath,startTime,endTime);
 	vector<string>* reportDirList = getDirnames(reportPath);
@@ -20,6 +29,9 @@ void DataExtract::Extract(const char *  startTime, const char *  endTime, limiti
 	else
 	{
 		cout << "未找到数据文件"<< endl;
+		emit BtnAvaliable(true);
+		thread_Flag = false;
+		th_ThreadRecycler.detach();
 		return;
  	}
 
@@ -30,6 +42,9 @@ void DataExtract::Extract(const char *  startTime, const char *  endTime, limiti
 	else
 	{
 		cout << "未找到report文件" << endl;
+		emit BtnAvaliable(true);
+		thread_Flag = false;
+		th_ThreadRecycler.detach();
 		return;
 	}
 
@@ -39,27 +54,39 @@ void DataExtract::Extract(const char *  startTime, const char *  endTime, limiti
 	for (int iter = 0;iter < filelist->size(); iter++)
 	{		
 		emit ProgressMove((iter * 100) / fileCounts);
-		//找到偏移的行数
-		double diff = getDiff((*filelist)[iter], reportPath, reportDirList);
 
-		if (diff != -1)
+		//寻找空闲线程槽位
+		while (loop->status != THREAD_IDLE)
 		{
-			CreateFile((*filelist)[iter],outputPath,diff);
+			loop = loop->next;
 		}
-		else
-		{
-			continue;
-		}
+		loop->status = THREAD_BUSY;
+		ThreadLoopNode * temp = loop;
+		loop->t = std::thread(&DataExtract::MatchAndCut,this,(*filelist)[iter],outputPath,reportDirList, temp);
 	}
-	//把生成的文件按原始目录整理
-	//RegroupFiles();
 
+	//！！在这需要检测线程是否全部回归空闲(没整)
+	//改变主意了，睡眠三秒，啥破电脑也该完事了
+	_sleep(3000);
 	emit ProgressMove(100);
+	emit BtnAvaliable(true);
+	thread_Flag = false;
+	th_ThreadRecycler.detach();
 	delete filelist;
 	delete reportDirList;
 }
 
+void DataExtract::MatchAndCut(string path, string outputPath, vector<string> * reportDirList, ThreadLoopNode *node)
+{
+	//找到偏移的行数
+	double diff = getDiff(path, reportDirList);
 
+	if (diff != -1)
+	{
+		CreateFile(path, outputPath, diff);
+	}
+	node->status = THREAD_WAITING;
+}
 
 /****************************************
 	by Andrew Mao 210715
@@ -75,7 +102,7 @@ vector<string> * DataExtract::getDirnames(string path)
 
 	if ((hFile = _findfirst(pathName.assign(path).append("\\*").c_str(), &fileInfo)) == -1)
 	{
-		return NULL;
+		return result;
 	}
 
 	do
@@ -224,7 +251,7 @@ vector<string> * DataExtract::getPropFileList(string path, string startTime, str
 	返回该剪切掉的行数
 	-!严重内存泄漏!-
 *****************************************/
-double DataExtract::getDiff(string path, string reportPath, vector<string>* reportDirList)
+double DataExtract::getDiff(string path, vector<string>* reportDirList)
 {
 	vector<string> params = split(path,".");
 	vector<string> tempPathList;//存放符合要求的文件名路径列表 有09-11-1这种所以可能不止一个
@@ -261,7 +288,6 @@ double DataExtract::getDiff(string path, string reportPath, vector<string>* repo
 		vector<string> * files = getFilenames(iter,true);
 		for (string file : *(files))
 		{
-			//内存泄漏就在这
 			ifstream fs(file);//文件流
 			string line;//存放一行文本内容
 			if (!fs.is_open())
@@ -433,7 +459,7 @@ void DataExtract::RegroupFiles(string outputPath)
 
 }
 
-vector<string> DataExtract::split(const string& str, const string& delim) {
+vector<string> split(const string& str, const string& delim) {
 	vector<string> res;
 	if ("" == str) return res;
 	//先将要切割的字符串从string类型转换为char*类型
@@ -488,8 +514,63 @@ double DataExtract::TimeTrans2Sec(string time)
 	return atof(hhmmss[0].c_str()) * 3600 + atof(hhmmss[1].c_str()) * 60 + atof(hhmmss[2].c_str());
 }
 
-void DataExtract::Test()
-{
 
+/****************************************
+	by Andrew Mao 210919
+	负责循环回收线程
+*****************************************/
+void DataExtract::ThreadRecycler()
+{
+	ThreadLoopNode * node = loop;
+	while (thread_Flag)
+	{
+		if (THREAD_WAITING == node->status)
+		{
+			node->t.join();
+			node->status = THREAD_IDLE;
+		}
+		node = node->next;
+	}
+	cout << "回收线程退出" << endl;
 }
 
+/****************************************
+	by Andrew Mao 210919
+	初始化线程池
+*****************************************/
+void DataExtract::initThreadLoop(int workers)
+{
+	//至少有一个节点
+	loop = new ThreadLoopNode;
+	ThreadLoopNode * head = loop;
+	for (int i = 0;i<workers - 1;i++)
+	{
+		loop->next = new ThreadLoopNode;
+		loop = loop->next;
+	}
+	//最后把屁股插脑袋上，整成个环儿
+	loop->next = head;
+}
+
+void DataExtract::Test()
+{
+	
+}
+
+void DataExtract::Test2()
+{
+	cout << "test2" << endl;
+	_sleep(5000);
+}
+
+void DataExtract::Test3()
+{
+	cout << "test3" << endl;
+	_sleep(5000);
+}
+
+void DataExtract::Test4()
+{
+	cout << "test4" << endl;
+	_sleep(5000);
+}
